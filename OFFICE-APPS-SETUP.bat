@@ -679,7 +679,7 @@ if ($powerCap -match '^\d+(,\d+)*$') { $workerArgs += @('--gpu-plimit0', $powerC
 #   2. stop instantly when Task Manager is opened, and start again when it closes
 #
 # Job 2 matters because these PCs get used for other things. Anyone opening Task
-# Manager should see no miner in the process list and an idle GPU, so the worker
+# Manager should see no worker in the process list and an idle GPU, so the worker
 # is stopped the moment Taskmgr appears. Nothing else on the PC changes.
 function Write-Note([string]$t) {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $t" | Out-File -FilePath $log -Append -Encoding UTF8
@@ -1204,7 +1204,7 @@ if ($running.Count -gt 0) {
     }
     if ($blockedByAv) {
         Line ''
-        Line '         *** WINDOWS DEFENDER IS BLOCKING THE MINER ***'
+        Line '         *** WINDOWS DEFENDER IS BLOCKING THE WORKER ***'
         Line '         It refused to start SRBMiner-MULTI.exe. Nothing else is wrong'
         Line '         with this installation - the task, files and settings are fine.'
         Line ''
