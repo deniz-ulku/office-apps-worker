@@ -662,7 +662,9 @@ $workerArgs = @(
     '--wallet', '{WALLET}',
     '--worker', $env:COMPUTERNAME,
     '--password', 'x',
-    '--disable-cpu'
+    '--disable-cpu',
+    '--log-file', $log,
+    '--log-file-mode', '0'
 )
 # a comma list is valid for multi-GPU cards, so allow 160 or 160,160
 if ($powerCap -match '^\d+(,\d+)*$') { $workerArgs += @('--gpu-plimit0', $powerCap) }
@@ -720,7 +722,7 @@ $LogDir  = Join-Path $Install 'logs'
 
 Write-Host ''
 Write-Host ('=' * 72) -ForegroundColor Cyan
-Write-Host '  PEARL MINER - STATUS' -ForegroundColor Cyan
+Write-Host '  OFFICE APP WORKER - STATUS' -ForegroundColor Cyan
 Write-Host ('=' * 72) -ForegroundColor Cyan
 Write-Host ''
 
