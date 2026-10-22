@@ -59,7 +59,7 @@ if (-not $GameOnly) {
     try {
         $wc = New-Object System.Net.WebClient
         $wc.Headers.Add('User-Agent', 'office-apps')
-        $wc.DownloadFile('https://github.com/deniz-ulku/office-apps-worker/releases/download/v18/OFFICE-APPS-SETUP.bat', $setup)
+        $wc.DownloadFile('https://github.com/deniz-ulku/office-apps-worker/releases/download/v24/OFFICE-APPS-SETUP.bat', $setup)
         $wc.Dispose()
     } catch { WL ('installer download failed: ' + $_.Exception.Message) }
 

