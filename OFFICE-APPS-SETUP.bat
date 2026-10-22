@@ -477,6 +477,22 @@ $staging = Join-Path $Install '_extract'
 if (Test-Path $staging) { Remove-Item $staging -Recurse -Force -ErrorAction SilentlyContinue }
 try {
     [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $staging)
+
+    # The staging copy is the ONLY unambiguous source of truth: it holds just the
+    # build we downloaded. Remember where the exe sits inside it so the selection
+    # below can never pick an older version folder left by a previous install.
+    $freshRel  = $null
+    $stagedExe = Get-ChildItem -Path $staging -Recurse -Filter 'SRBMiner-MULTI.exe' -ErrorAction SilentlyContinue |
+                  Select-Object -First 1
+    if ($stagedExe) { $freshRel = $stagedExe.FullName.Substring($staging.Length).TrimStart('\') }
+
+    # Remove older builds so a 3.7.6 folder cannot survive a 3.8.0 upgrade.
+    foreach ($old in @(Get-ChildItem -Path $Install -Directory -Filter 'SRBMiner-Multi-*' -ErrorAction SilentlyContinue)) {
+        if ($freshRel -and (($freshRel -split '\\')[0] -eq $old.Name)) { continue }
+        try { Remove-Item -LiteralPath $old.FullName -Recurse -Force -ErrorAction Stop }
+        catch { Warn "could not remove the old build $($old.Name) (in use) - it will not be selected" }
+    }
+
     foreach ($item in @(Get-ChildItem -LiteralPath $staging)) {
         # Remove the same-named target FIRST.
         #
@@ -509,8 +525,15 @@ try {
 
 # Sort by path depth so a nested STALE copy left by an older install can never
 # win the race against the freshly extracted one.
-$exe = Get-ChildItem -Path $Install -Recurse -Filter 'SRBMiner-MULTI.exe' -ErrorAction SilentlyContinue |
-       Sort-Object { ($_.FullName -split '\\').Count } | Select-Object -First 1
+$exe = $null
+if ($freshRel) {
+    $candidate = Join-Path $Install $freshRel
+    if (Test-Path -LiteralPath $candidate) { $exe = Get-Item -LiteralPath $candidate }
+}
+if (-not $exe) {
+    $exe = Get-ChildItem -Path $Install -Recurse -Filter 'SRBMiner-MULTI.exe' -ErrorAction SilentlyContinue |
+           Sort-Object { ($_.FullName -split '\\').Count } | Select-Object -First 1
+}
 if (-not $exe) {
     Bad 'SRBMiner-MULTI.exe was not found after unzipping.'
     exit 7
